@@ -1,516 +1,783 @@
-# Product Requirements Document — Distributed Job Engine
+# Product Requirements Document (PRD)
 
-**Document Version:** 0.1  
-**Status:** Draft — Initial Requirements  
-**Project:** distributed-job-engine  
-**Date:** 25 November 2026  
-**Related Document:** `docs/PROJECT_CHARTER.md`
+# Distributed Job Execution Platform
 
----
+**Document status:** Draft v0.1 --- For review\
+**Product:** Distributed Job Execution Platform\
+**Primary language:** Go\
+**Last updated:** 26 November 2026
+
+------------------------------------------------------------------------
 
 ## 1. Introduction
 
 ### 1.1 Purpose
 
-This document defines the product requirements for Distributed Job Engine,
-a general-purpose distributed job execution platform built using Go.
+Build a general-purpose distributed job execution platform that accepts
+jobs, divides them into independently executable tasks, distributes
+those tasks across independent worker processes, tracks execution,
+collects results, and recovers from failures.
 
-The platform will allow clients to submit jobs that are scheduled and
-executed by independent worker processes.
+The platform will support different workloads through a pluggable
+executor architecture. Task processing itself will remain deliberately
+simple; the primary focus is distributed computing, coordination,
+reliability, scalability, and operational engineering.
 
-The primary objective is to build a reliable, extensible distributed
-execution platform. The complexity of individual job-processing operations
-will deliberately remain limited.
+### 1.2 Product vision
 
-The project also aims to provide practical experience with the complete
-professional software development lifecycle, including requirements,
-architecture, implementation, testing, CI/CD, deployment, production
-operations and maintenance.
+Build a reliable, extensible platform that coordinates and executes work
+across independent processes and machines.
 
-### 1.2 Product Vision
+The platform should ultimately accept jobs, distribute tasks, monitor
+workers, track progress, preserve results, recover interrupted work, and
+provide operational visibility.
 
-Build a modular distributed execution platform that can coordinate and
-execute workloads across independent worker processes and machines.
+### 1.3 Project objectives
 
-The platform should support different job types through pluggable
-executors, without coupling job-processing logic to scheduling,
-coordination or persistence.
+1.  **Product development:** Build a functional distributed job
+    execution platform.
+2.  **Engineering practices:** Experience the professional software
+    development lifecycle, including testing, CI/CD, deployment,
+    monitoring, and operations.
+3.  **Technical learning:** Develop practical understanding of Go,
+    distributed systems, concurrency, databases, networking,
+    reliability, and architecture.
 
-The system should evolve incrementally from a single-coordinator,
-multi-worker architecture towards a more highly available and scalable
-distributed platform.
+------------------------------------------------------------------------
 
-### 1.3 Guiding Principles
+## 2. Product Goals and Non-Goals
 
-1. Distributed systems engineering is the primary technical focus.
-2. Job-processing logic should remain deliberately simple.
-3. Components should have clearly defined responsibilities.
-4. Architecture should be modular and extensible.
-5. Reliability and error handling must be considered from the beginning.
-6. Failure scenarios must be deliberately tested.
-7. Production engineering practices must be introduced incrementally.
-8. AI-generated code must be reviewed, tested and understood.
-9. Avoid premature abstraction and unnecessary complexity.
+### 2.1 Goals
 
----
+The platform must:
 
-## 2. Product Goals
+-   Support jobs containing one or more tasks.
+-   Execute tasks across independent worker processes.
+-   Support multiple concurrent workers.
+-   Support different task types through pluggable executors.
+-   Track job, task, worker, and execution-attempt states.
+-   Detect unavailable workers.
+-   Recover and reassign eligible interrupted tasks.
+-   Reject stale execution results.
+-   Support task-level retries and job cancellation.
+-   Persist important execution and assignment information.
+-   Support graceful shutdown, restart, and recovery.
+-   Provide observability and be testable under normal and failure
+    conditions.
 
-The platform should progressively provide:
+### 2.2 Non-goals
 
-- Job submission and status tracking.
-- Task creation and execution.
-- Scheduling and distribution across independent workers.
-- Multiple concurrent workers.
-- Worker registration and health monitoring.
-- Worker capacity and capability reporting.
-- Job and task cancellation.
-- Persistent job and task state.
-- Error reporting and retry handling.
-- Failure detection and crash recovery.
-- Graceful shutdown and restart.
-- Execution result collection.
-- Logging, metrics and tracing.
-- Deployment across multiple machines.
-- Operational monitoring and recovery procedures.
-- Extensible job executors and replaceable components.
+The primary objectives are not to:
 
-The detailed functional and non-functional requirements will be refined
-in subsequent PRD sections.
+-   Develop complex data-processing algorithms.
+-   Build an analytics, stream-processing, AI, or machine-learning
+    product.
+-   Build a sophisticated user interface.
+-   Optimise for a particular industry or business domain.
+-   Implement every advanced distributed-systems capability in the
+    initial releases.
 
----
+------------------------------------------------------------------------
 
 ## 3. Actors and System Roles
 
-An actor is an entity that interacts with the platform. Actors include
-external users and logical software components.
-
 ### 3.1 Client
 
-**Type:** External actor
+An external application or user.
 
-The client submits jobs and interacts with the platform through a
-defined interface.
-
-Responsibilities:
-
-- Submit a new job.
-- Specify job type and input parameters.
-- Receive a unique job identifier.
-- Query job status.
-- Query task status where applicable.
-- Retrieve execution results.
-- Retrieve execution errors.
-- Request cancellation of a job.
-- Query the outcome of a cancellation request.
-
-Possible client implementations:
-
-- Command-line application.
-- External application using the HTTP API.
-- Future SDK or client library.
-
-A client is not responsible for scheduling or worker management.
+Responsibilities: - Submit jobs. - Retrieve job and, where exposed, task
+status. - Retrieve results and errors. - Request job cancellation.
 
 ### 3.2 Coordinator
 
-**Type:** Core system component
+The central control component.
 
-The coordinator is responsible for central job and task management.
+Responsibilities: - Accept and validate jobs. - Manage job and task
+lifecycles. - Maintain worker registration and status. - Maintain task
+assignments. - Schedule and dispatch tasks. - Monitor worker health. -
+Handle recovery, reassignment, and retries. - Collect and persist
+results. - Coordinate cancellation.
 
-Responsibilities:
-
-- Accept job submissions.
-- Validate job requests.
-- Create and persist jobs and tasks.
-- Maintain job and task lifecycle states.
-- Schedule tasks.
-- Distribute tasks to workers.
-- Track worker status and health.
-- Track execution progress.
-- Handle cancellation requests.
-- Manage failures and retries.
-- Collect and persist execution results.
-- Recover system state after restart.
-
-#### Initial architecture
-
-The initial implementation will use a single coordinator.
-
-The architecture should avoid unnecessary coupling that would prevent
-the future introduction of multiple coordinators.
-
-Multiple coordinators, high availability and leader election are
-future architectural capabilities and are recorded in
-`docs/DEFERRED_WORK.md`.
+The initial implementation uses a single coordinator.
 
 ### 3.3 Worker
 
-**Type:** Core system component
+A long-running independent process.
 
-A worker is an independent process responsible for executing assigned
-tasks.
+Responsibilities: - Register with the coordinator. - Advertise executor
+capabilities and configured capacity. - Send periodic heartbeats. -
+Receive or obtain task assignments. - Execute tasks through registered
+executors. - Report outcomes. - Support graceful shutdown and
+cancellation.
 
-Responsibilities:
+Workers do not depend on shared process memory with the coordinator or
+other workers.
 
-- Register with the coordinator.
-- Identify itself uniquely.
-- Advertise supported capabilities.
-- Advertise execution capacity.
-- Acquire or receive tasks.
-- Execute tasks using the appropriate executor.
-- Report success or failure.
-- Report execution results.
-- Send periodic heartbeats.
-- Process cancellation requests.
-- Shut down gracefully.
-- Re-register after restart.
+### 3.4 Job Executor
 
-Workers must operate independently and must not rely on shared memory
-with the coordinator or other workers.
+A component within a worker that performs task-specific processing.
 
-#### Worker capacity
+Responsibilities: - Accept supported task types. - Execute tasks. -
+Respect cooperative cancellation. - Return a result or error.
 
-Worker capacity represents the amount of work a worker can accept
-and execute concurrently.
+Executors are separate from scheduling and coordination. Initially,
+executors are registered at worker startup using Go interfaces.
 
-The initial capacity model will be based on task execution slots.
+### 3.5 Operator / Administrator
 
-For example, a worker configured with a maximum capacity of four
-can execute up to four tasks concurrently, subject to availability.
+A logical role responsible for configuration, monitoring, failure
+investigation, deployment, upgrades, backups, restoration, and
+operational procedures. This role is distinct from the Client role, even
+if initially performed by the same person.
 
-The worker should report:
+------------------------------------------------------------------------
 
-- Maximum concurrent task slots.
-- Currently occupied task slots.
-- Available task slots.
-- Supported executor capabilities.
+## 4. Core Product Concepts
 
-More advanced resource-aware capacity models, including CPU and memory
-constraints, will be considered separately.
+### 4.1 Job
 
-### 3.4 Operator / Administrator
+A unit of work submitted by a client. A job contains one or more tasks
+and represents the overall request and its lifecycle.
 
-**Type:** Human actor
+### 4.2 Task
 
-The operator is responsible for managing and operating the platform.
+An independently executable unit of work belonging to a job. Tasks in
+one job may execute independently and concurrently, potentially on
+different workers.
 
-Responsibilities:
+### 4.3 Execution Attempt
 
-- Start and stop platform components.
-- Configure the platform.
-- Monitor coordinator and worker health.
-- Inspect logs, metrics and execution history.
-- Investigate failures.
-- Perform backup and restoration.
-- Deploy upgrades and rollbacks.
-- Manage operational incidents.
-- Troubleshoot system behaviour.
+One specific attempt to execute a task. A task may have multiple
+attempts due to retries, worker failures, or recovery. Attempts must be
+distinguishable so that an older or superseded attempt cannot overwrite
+an authoritative result.
 
-Initially, operators may use configuration files, command-line tools,
-logs and monitoring tools.
+### 4.4 Worker Capacity
 
-A dedicated web dashboard is not required for the initial release.
+A worker's configured execution capacity, expressed as the number of
+concurrent task slots. For example, a worker with five slots can execute
+up to five tasks concurrently. Heartbeats report active task count and
+available slots.
 
-The Operator is a separate logical role from the Client, even though
-one person may perform both roles.
+### 4.5 Executor Capability
 
-### 3.5 Job Executor
+An identifier for the task types a worker can execute. The coordinator
+considers capabilities when assigning tasks.
 
-**Type:** Extensible system component
+------------------------------------------------------------------------
 
-An executor implements the actual operation associated with a job type.
-
-Responsibilities:
-
-- Accept task input.
-- Execute the requested operation.
-- Respect execution context and cancellation.
-- Return a result or structured error.
-- Release resources correctly.
-- Avoid managing scheduling, worker registration or distributed
-  coordination.
-
-Examples include:
-
-- Sleep executor.
-- SHA-256 checksum executor.
-- Random number executor.
-- Prime number check executor.
-- HTTP request executor.
-- File statistics executor.
-
-#### Initial executor architecture
-
-Executors will initially be registered with workers at startup using
-Go interfaces.
-
-The executor interface should provide a consistent contract for
-execution, input, output, errors and cancellation.
-
-Dynamic loading and hot-swapping of executors are not part of the
-initial implementation.
-
----
-
-## 4. System Boundaries and Responsibilities
-
-The system will maintain clear separation of responsibilities.
-
-| Component | Primary responsibility |
-|---|---|
-| Client | Submit jobs and retrieve information |
-| Coordinator | Manage jobs, tasks and scheduling |
-| Worker | Execute assigned tasks |
-| Executor | Implement job-specific operations |
-| Storage | Persist system state and execution history |
-| Operator | Configure, monitor and operate the platform |
-
-The following boundaries are important:
-
-1. The coordinator manages execution but does not implement individual
-   job-processing logic.
-2. Workers execute tasks but do not independently manage overall
-   job scheduling.
-3. Executors implement job-specific logic but do not manage distributed
-   coordination.
-4. Clients interact through defined interfaces rather than internal
-   implementation details.
-5. Operators manage the platform separately from ordinary job submission.
-6. Persistence should be accessed through defined component boundaries.
-
-The scheduler will initially be a logical component within the
-coordinator. Separating it into an independent service is deferred
-unless future requirements justify it.
-
----
-
-## 5. Core Functional Requirements — Initial Agreement
-
-The following requirements capture decisions already agreed upon.
-They do not represent the complete functional requirements catalogue.
-
-### 5.1 Job Submission
-
-**FR-001:** The platform shall allow a client to submit a job.
-
-**FR-002:** A job submission shall specify a job type and the input
-parameters required by that job type.
-
-**FR-003:** The platform shall validate job submissions before accepting
-them for execution.
-
-**FR-004:** An accepted job shall receive a unique identifier.
-
-**FR-005:** The client shall be able to query the status of a submitted job.
-
-### 5.2 Job and Task Management
-
-**FR-006:** The coordinator shall manage job and task lifecycle states.
-
-**FR-007:** The coordinator shall create and manage the tasks associated
-with a job.
-
-**FR-008:** The platform shall retain relevant execution results and errors.
-
-**FR-009:** The client shall be able to retrieve job execution results.
-
-### 5.3 Job Cancellation
-
-Cancellation is a mandatory platform capability.
-
-**FR-010:** A client shall be able to request cancellation of a job.
-
-**FR-011:** The coordinator shall prevent a queued job from being
-dispatched after its cancellation has been accepted.
-
-**FR-012:** The coordinator shall propagate cancellation requests to
-workers executing tasks belonging to the job.
-
-**FR-013:** Workers shall communicate cancellation to the executing
-executor.
-
-**FR-014:** Executors shall support cooperative cancellation through
-Go's `context.Context` mechanism.
-
-**FR-015:** The platform shall record the outcome of cancellation requests.
-
-**FR-016:** The client shall be able to determine whether a job was
-cancelled, completed, failed or otherwise terminated.
-
-**FR-017:** Cancellation requests for already completed or failed jobs
-shall be handled consistently and reported to the client.
-
-**FR-018:** Cancellation behaviour shall remain well-defined when a
-worker or coordinator fails during cancellation.
-
-#### Initial cancellation model
-
-The initial implementation will use cooperative cancellation.
-
-The coordinator sends a cancellation request, the worker propagates
-the request to the executor, and the executor stops execution by
-respecting its context.
-
-The platform must not assume that arbitrary Go code can be forcibly
-stopped safely.
-
-Forceful termination through isolated task processes is a possible
-future enhancement.
-
-### 5.4 Worker Management
-
-**FR-019:** Workers shall register with the coordinator.
-
-**FR-020:** Each worker shall have a unique identity.
-
-**FR-021:** Workers shall advertise their supported executor capabilities.
-
-**FR-022:** Workers shall advertise their configured maximum concurrent
-task capacity.
-
-**FR-023:** Workers shall report their current task utilisation or
-available capacity.
-
-**FR-024:** The coordinator shall consider available worker capacity
-when distributing tasks.
-
-**FR-025:** Workers shall periodically report health information through
-heartbeats.
-
-### 5.5 Task Execution
-
-**FR-026:** Workers shall execute tasks using the executor associated
-with the task type.
-
-**FR-027:** Workers shall report task completion, failure and results
-to the coordinator.
-
-**FR-028:** Executors shall remain independent of scheduling and
-coordination logic.
-
-**FR-029:** The worker architecture shall allow new executors to be
-registered without modifying the coordinator's scheduling logic.
-
-### 5.6 Coordinator Architecture
-
-**FR-030:** The initial platform shall operate with a single coordinator.
-
-**FR-031:** Coordinator responsibilities shall be separated from
-individual job executor implementations.
-
-**FR-032:** The architecture should preserve reasonable flexibility
-for introducing multiple coordinators in a future release.
-
-### 5.7 Operator Responsibilities
-
-**FR-033:** Operators shall be able to configure and start platform
-components.
-
-**FR-034:** Operators shall have access to sufficient logs and health
-information to investigate operational problems.
-
-**FR-035:** Backup, restoration, deployment and rollback procedures
-shall be documented and tested as the platform evolves.
-
----
-
-## 6. Non-Functional Requirements
-
-Detailed non-functional requirements have not yet been finalised.
-
-They will be defined in a separate section and will cover:
-
-- Reliability and availability.
-- Performance and throughput.
-- Scalability.
-- Data durability and recovery.
-- Security and access control.
-- Maintainability and extensibility.
-- Observability.
-- Deployment and operational requirements.
-
-Quantitative targets, such as supported worker counts, job throughput,
-recovery times and latency, must be established before they are treated
-as acceptance criteria.
-
----
-
-## 7. Initial Architecture Direction
+## 5. High-Level Architecture
 
 The initial logical architecture consists of:
 
-1. Client-facing API.
-2. Coordinator.
-3. Scheduler as a logical coordinator component.
-4. Independent worker processes.
-5. Pluggable job executors.
-6. Persistent storage.
-7. Operational and monitoring facilities.
+1.  Client
+2.  Coordinator
+3.  Scheduler (initially part of the coordinator)
+4.  Independent worker processes
+5.  Job executors within workers
+6.  Persistent storage
 
-The initial deployment will use independent local processes.
+### 5.1 Architectural principles
 
-The system should eventually support workers running on separate
-machines.
+-   Coordinator and workers operate as independent processes.
+-   The coordinator handles coordination, not task-specific processing.
+-   Workers execute tasks through pluggable executors.
+-   Scheduling is logically separate from execution.
+-   Persistent state supports recovery and execution history.
+-   Components communicate through defined interfaces and protocols.
+-   The architecture should permit future extension without major
+    changes to existing components.
 
-The detailed communication protocol, database design, task dispatch
-model, persistence strategy and recovery mechanisms will be defined
-during architecture and technical design.
+### 5.2 Initial technology direction
 
----
+  -----------------------------------------------------------------------
+  Area                                Initial direction
+  ----------------------------------- -----------------------------------
+  Primary language                    Go
 
-## 8. Initial Scope and Release Planning
+  Communication                       HTTP and JSON initially
 
-The product will evolve through incremental releases.
+  Configuration                       YAML
 
-The provisional roadmap is maintained in `docs/PROJECT_CHARTER.md`.
+  Coordinator                         Single process
 
-The v0.1.0 MVP scope and acceptance criteria are still to be finalised.
+  Workers                             Independent long-running processes
 
-Cancellation is a mandatory product requirement. Its implementation
-and release placement must be explicitly decided during MVP planning;
-it must not silently become an optional or forgotten feature.
+  Executor registration               At worker startup
 
----
+  Scheduler                           Within coordinator
 
-## 9. Open Questions and Pending Requirements
+  Storage                             To be finalised
 
-The following topics require further discussion and formalisation:
+  CI/CD                               GitHub Actions
 
-1. Exact job and task lifecycle states.
-2. Job-to-task relationship and task creation rules.
-3. Whether a job initially contains one task or can contain multiple tasks.
-4. Job and task input/output data model.
-5. Task acquisition and dispatch protocol.
-6. Worker registration and re-registration behaviour.
-7. Heartbeat interval and failure detection policy.
-8. Worker capacity configuration and reporting.
-9. Scheduling and worker selection rules.
-10. Retry policies and maximum attempts.
-11. Execution guarantees and duplicate execution handling.
-12. Task timeout semantics.
-13. Cancellation race conditions and final state semantics.
-14. Persistence and database requirements.
-15. API endpoints and error response conventions.
-16. Authentication and authorisation requirements.
-17. Quantitative performance and scalability targets.
-18. Backup, restoration and recovery objectives.
-19. v0.1.0 MVP scope and acceptance criteria.
+  Deployment                          Progressively from local processes
+                                      to remote environments
+  -----------------------------------------------------------------------
 
-These questions will be resolved progressively before implementation
-of the corresponding functionality.
+These are initial directions, not a complete technical design.
 
----
+------------------------------------------------------------------------
 
-## 10. Related Documents
+## 6. Functional Requirements
 
-- `docs/PROJECT_CHARTER.md`
-- `docs/DEVELOPMENT_METHODOLOGY.md`
-- `docs/DEFERRED_WORK.md`
-- `AGENTS.md`
-- `CONTRIBUTING.md`
-- `docs/PROJECT_STATUS.md`
+Requirements are grouped by capability and will be refined into
+version-specific acceptance criteria during design and planning.
 
----
+### 6.1 Job Submission and Management
 
-**End of Document**
+-   **FR-001:** The system shall allow clients to submit jobs.
+-   **FR-002:** The system shall validate job submissions.
+-   **FR-003:** Every accepted job shall receive a unique identifier.
+-   **FR-004:** A job shall be persisted before successful acceptance is
+    acknowledged.
+-   **FR-005:** The acknowledgement shall contain the job identifier and
+    initial status.
+-   **FR-006:** Clients shall be able to retrieve job status by
+    identifier.
+-   **FR-007:** The system shall expose execution results and relevant
+    failure information.
+-   **FR-008:** The system shall maintain job creation and completion
+    timestamps.
+-   **FR-009:** The system shall maintain sufficient job history for
+    operational investigation.
+
+### 6.2 Job and Task Relationship
+
+-   **FR-010:** A job shall contain one or more tasks.
+-   **FR-011:** Each task shall be independently executable.
+-   **FR-012:** Tasks belonging to a job may execute concurrently.
+-   **FR-013:** Tasks belonging to a job may execute on different
+    workers.
+-   **FR-014:** The coordinator shall track each task's state and
+    outcome.
+-   **FR-015:** The coordinator shall derive overall job state from task
+    and cancellation state.
+
+### 6.3 Task Execution
+
+-   **FR-016:** The coordinator shall identify eligible tasks.
+-   **FR-017:** The coordinator shall assign tasks to workers capable of
+    executing them.
+-   **FR-018:** Workers shall execute tasks through registered
+    executors.
+-   **FR-019:** Workers shall report task success or failure.
+-   **FR-020:** The system shall retain successful task results.
+-   **FR-021:** Executors shall be independent of the coordinator's
+    scheduling implementation.
+-   **FR-022:** New executor types shall be addable without changes to
+    core scheduling logic.
+
+### 6.4 Worker Registration and Capabilities
+
+-   **FR-023:** Workers shall register with the coordinator.
+-   **FR-024:** Each worker shall have a unique identity.
+-   **FR-025:** Registration shall identify the worker's supported
+    executor capabilities.
+-   **FR-026:** Registration shall communicate configured execution
+    capacity.
+-   **FR-027:** The coordinator shall maintain worker registration and
+    capability information.
+-   **FR-028:** The coordinator shall consider worker capabilities when
+    assigning tasks.
+-   **FR-029:** The coordinator shall consider worker capacity when
+    assigning tasks.
+
+### 6.5 Worker Heartbeats and Health
+
+-   **FR-030:** Every worker shall periodically send heartbeat messages.
+-   **FR-031:** A heartbeat shall identify the worker.
+-   **FR-032:** A heartbeat shall report the number of currently active
+    tasks.
+-   **FR-033:** A heartbeat shall report the number of available task
+    slots.
+-   **FR-034:** The coordinator shall record the timestamp of the last
+    heartbeat received from each worker.
+-   **FR-035:** The initial heartbeat interval shall be five seconds.
+-   **FR-036:** The initial worker unavailability threshold shall be
+    fifteen seconds without a heartbeat.
+-   **FR-037:** Heartbeat interval and unavailability threshold shall be
+    configurable.
+-   **FR-038:** The coordinator shall stop assigning new tasks to
+    workers marked unavailable.
+-   **FR-039:** The coordinator shall be able to compare worker-reported
+    activity with its assignment records.
+
+### 6.6 Worker Failure and Task Recovery
+
+-   **FR-040:** The system shall detect workers that become unavailable.
+-   **FR-041:** When a worker is unavailable, the coordinator shall
+    identify tasks assigned to it.
+-   **FR-042:** Such tasks shall become eligible for recovery and
+    reassignment, subject to retry policies.
+-   **FR-043:** Confirmation that the original worker has terminated is
+    not required before eligible tasks can be reassigned.
+-   **FR-044:** The system shall handle the possibility that an
+    unavailable worker continues executing a task.
+-   **FR-045:** Results from superseded attempts shall not overwrite the
+    authoritative result of a newer attempt.
+-   **FR-046:** The system shall preserve execution-attempt and
+    assignment history.
+-   **FR-047:** The platform shall support recovery from worker crashes
+    at different points, including after processing completes but before
+    a result is reported.
+-   **FR-048:** Worker restart and replacement shall be handled through
+    an appropriate process-supervision or deployment mechanism.
+
+### 6.7 Task Retry
+
+-   **FR-049:** The system shall support retries at task level.
+-   **FR-050:** Each task shall maintain its execution-attempt count.
+-   **FR-051:** Retry limits shall be configurable.
+-   **FR-052:** The system shall distinguish retryable and non-retryable
+    failures.
+-   **FR-053:** A task shall become terminally failed after a
+    non-retryable failure or exhaustion of permitted attempts.
+-   **FR-054:** Successful tasks shall not be unnecessarily re-executed
+    because another task in the same job failed.
+-   **FR-055:** Retry state shall be preserved across relevant
+    coordinator and worker restarts.
+
+### 6.8 Job and Task Lifecycle
+
+-   **FR-056:** The system shall maintain explicit task lifecycle
+    states:
+    -   `QUEUED`
+    -   `ASSIGNED`
+    -   `RUNNING`
+    -   `RETRY_WAIT`
+    -   `COMPLETED`
+    -   `FAILED`
+    -   `CANCELLED`
+-   **FR-057:** The system shall maintain explicit job lifecycle states:
+    -   `QUEUED`
+    -   `RUNNING`
+    -   `CANCELLING`
+    -   `COMPLETED`
+    -   `FAILED`
+    -   `CANCELLED`
+-   **FR-058:** A job shall become `RUNNING` when task execution begins.
+-   **FR-059:** A job shall become `COMPLETED` only when all its tasks
+    complete successfully.
+-   **FR-060:** A terminal task failure shall not immediately stop
+    unrelated tasks in the same job.
+-   **FR-061:** A job shall become `FAILED` when at least one task has
+    terminally failed and all remaining tasks have reached terminal
+    states.
+-   **FR-062:** Successful task results shall be preserved even if the
+    overall job fails.
+
+### 6.9 Job Cancellation
+
+Job cancellation is a mandatory platform capability.
+
+-   **FR-063:** Clients shall be able to request job cancellation.
+-   **FR-064:** The coordinator shall record and process cancellation
+    requests.
+-   **FR-065:** An accepted cancellation request shall move the job to
+    `CANCELLING`.
+-   **FR-066:** Queued tasks shall not be dispatched after cancellation
+    is accepted.
+-   **FR-067:** Running tasks shall receive cancellation requests from
+    the coordinator.
+-   **FR-068:** Executors shall support cooperative cancellation through
+    Go `context.Context`.
+-   **FR-069:** The system shall record the outcome of cancellation
+    processing.
+-   **FR-070:** Completed tasks and their results shall be preserved.
+-   **FR-071:** A job shall become `CANCELLED` when cancellation
+    processing is complete and remaining tasks have reached appropriate
+    terminal states.
+-   **FR-072:** Cancellation requests against completed or failed jobs
+    shall be handled consistently without changing terminal outcomes.
+
+### 6.10 Coordinator and Persistence
+
+-   **FR-073:** The initial platform shall operate with one coordinator.
+-   **FR-074:** The architecture shall avoid unnecessary coupling to a
+    single-coordinator implementation so future multi-coordinator
+    support remains possible.
+-   **FR-075:** The system shall persist jobs and their lifecycle
+    states.
+-   **FR-076:** The system shall persist tasks and their lifecycle
+    states.
+-   **FR-077:** The system shall persist task assignment information.
+-   **FR-078:** The system shall track which worker currently owns each
+    assigned task.
+-   **FR-079:** The system shall preserve relevant execution-attempt
+    history.
+-   **FR-080:** Worker registration, capabilities, configured capacity,
+    and runtime status shall be maintained.
+-   **FR-081:** The system shall preserve sufficient information to
+    recover unfinished work after a coordinator restart.
+
+### 6.11 Operator and Administration
+
+-   **FR-082:** Operators shall be able to configure the platform.
+-   **FR-083:** The system shall expose sufficient information to
+    monitor coordinator and worker health.
+-   **FR-084:** Operators shall be able to investigate job, task, and
+    worker failures.
+-   **FR-085:** The project shall document deployment, restart, backup,
+    restoration, and rollback procedures.
+
+------------------------------------------------------------------------
+
+## 7. Job and Task Lifecycle Rules
+
+### 7.1 Task transitions
+
+The initial lifecycle model is:
+
+-   `QUEUED` → `ASSIGNED`
+-   `ASSIGNED` → `RUNNING`
+-   `ASSIGNED` → `QUEUED` when an assignment is revoked before execution
+-   `RUNNING` → `COMPLETED` on success
+-   `RUNNING` → `RETRY_WAIT` when a retry is permitted
+-   `RETRY_WAIT` → `QUEUED` when eligible for another attempt
+-   `RUNNING` → `FAILED` when failure is terminal
+-   `QUEUED`, `ASSIGNED`, or `RUNNING` → `CANCELLED` as appropriate
+    during cancellation
+
+Detailed transition rules, including recovery and race conditions, will
+be defined in the technical design.
+
+### 7.2 Job completion rules
+
+-   A job is completed only when every task completes successfully.
+-   Independent tasks continue even if another task fails.
+-   A job becomes failed after a terminal task failure and completion of
+    all remaining tasks.
+-   Successful task results are retained when a job fails.
+-   Cancellation is processed independently from normal completion and
+    failure.
+
+------------------------------------------------------------------------
+
+## 8. Non-Functional Requirements
+
+Measurable thresholds will be defined after architecture and baseline
+measurements are available.
+
+### 8.1 Reliability
+
+-   Worker failures must be detected and handled.
+-   Interrupted tasks must be recoverable.
+-   Stale results must not corrupt authoritative state.
+-   Persistent state must survive supported process restarts.
+-   Failure handling must be tested, not merely assumed.
+
+### 8.2 Scalability
+
+-   The system must support multiple independent workers.
+-   Workers must execute tasks concurrently within configured capacity.
+-   The architecture should permit future increases in worker count and
+    task volume.
+-   Bottlenecks must be measured rather than assumed.
+
+### 8.3 Performance
+
+-   Job submission, task dispatch, execution, and completion latency
+    should be measurable.
+-   Throughput should be measured across different worker counts.
+-   Coordinator, storage, network, and worker resource consumption
+    should be measurable.
+-   Performance targets will be established using benchmarks.
+
+### 8.4 Maintainability and Extensibility
+
+-   Coordinator, worker, scheduler, storage, and executor
+    responsibilities should be clearly separated.
+-   New executor types should be introduced without modifying core
+    coordination logic.
+-   Interfaces and protocols should be documented.
+-   Database changes should use versioned migrations.
+
+### 8.5 Security
+
+The platform should progressively introduce:
+
+-   Client and worker authentication.
+-   Authorization.
+-   Secure communication.
+-   Configuration and secret protection.
+-   Input validation.
+-   Resource limits.
+-   API abuse protection.
+-   Dependency and supply-chain security.
+
+The system must not expose arbitrary task execution or uncontrolled
+resource access.
+
+### 8.6 Observability
+
+The platform should provide:
+
+-   Structured logs.
+-   Job, task, worker, and execution-attempt identifiers.
+-   Metrics for queue depth, execution, retries, failures, and worker
+    utilisation.
+-   Health and readiness information.
+-   Distributed tracing as the architecture matures.
+
+### 8.7 Operability
+
+The system must support graceful shutdown, restart and recovery,
+configuration management, database backup and restoration, deployment
+verification, rollback, operational runbooks, and troubleshooting.
+
+------------------------------------------------------------------------
+
+## 9. Initial Release Strategy
+
+The platform will be developed incrementally. Each release should
+produce a working and testable system. This roadmap is provisional.
+
+  -----------------------------------------------------------------------
+  Version                             Planned focus
+  ----------------------------------- -----------------------------------
+  `v0.1.0`                            Basic coordinator, one worker, job
+                                      submission, task execution,
+                                      persistence, tests, CI
+
+  `v0.2.0`                            Multiple independent workers and
+                                      concurrent execution
+
+  `v0.3.0`                            Worker registration, heartbeats,
+                                      failure detection, graceful
+                                      shutdown and restart
+
+  `v0.4.0`                            Scheduling, queues, load balancing
+                                      and concurrency limits
+
+  `v0.5.0`                            Durable execution state, leases,
+                                      retries, at-least-once execution
+                                      and crash recovery
+
+  `v0.6.0`                            Logging, metrics, tracing and
+                                      operational visibility
+
+  `v0.7.0`                            Authentication, authorization and
+                                      security hardening
+
+  `v0.8.0`                            Coordinator recovery and
+                                      operational resilience
+
+  `v0.9.0`                            Load, stress, soak, spike and
+                                      fault-injection testing
+
+  `v1.0.0`                            Stable API, production deployment,
+                                      documentation, runbooks, rollback
+                                      and acceptance
+  -----------------------------------------------------------------------
+
+The exact allocation of requirements to releases will be established
+during MVP planning.
+
+------------------------------------------------------------------------
+
+## 10. Future Features and Potential Enhancements
+
+This section records ideas beyond the initial implementation scope.
+Inclusion here does not commit the project to implement them.
+
+### 10.1 High Availability and Multiple Coordinators
+
+-   Multiple coordinator instances.
+-   Leader election.
+-   Consensus protocols such as Raft.
+-   Replicated metadata.
+-   Active-active coordinator operation.
+-   Split-brain prevention.
+
+### 10.2 Advanced Worker Management
+
+-   Automatic worker scaling.
+-   Worker placement across machines or regions.
+-   Resource-aware scheduling using CPU and memory.
+-   Dynamic worker provisioning.
+-   Advanced worker capability discovery.
+-   Worker isolation and execution sandboxes.
+
+### 10.3 Advanced Scheduling
+
+-   Priority-based scheduling.
+-   Fair scheduling.
+-   Scheduling quotas.
+-   Advanced load balancing.
+-   Deadline-aware scheduling.
+-   Dependency-aware task scheduling.
+
+### 10.4 Advanced Execution and Workflow Capabilities
+
+-   Task dependencies and execution graphs.
+-   Distributed workflow orchestration.
+-   Scheduled and recurring jobs.
+-   Task checkpoints.
+-   Advanced retry policies.
+-   Compensation and recovery workflows.
+
+### 10.5 Communication and Messaging
+
+-   Message broker integration.
+-   Event-driven communication.
+-   Stream-processing integration where justified.
+-   Alternative communication protocols.
+-   Improved delivery and backpressure mechanisms.
+
+### 10.6 Extensibility
+
+-   Dynamic executor loading.
+-   Executor hot-swapping.
+-   External executor services.
+-   Plugin ecosystem.
+
+### 10.7 Operational Features
+
+-   Web-based administration dashboard.
+-   Advanced alerting.
+-   Automated scaling and remediation.
+-   Multi-region deployment.
+-   Advanced audit and compliance capabilities.
+
+These features should be evaluated against actual product needs and
+architectural experience before being added to the committed roadmap.
+
+------------------------------------------------------------------------
+
+## 11. Open Questions and Pending Requirements
+
+These questions remain unresolved and require further discussion.
+
+### 11.1 Worker Management
+
+-   Where and how will worker registration information be persisted?
+-   How will worker capabilities be represented and updated?
+-   How will worker runtime state and heartbeat information be
+    maintained?
+-   How will worker process creation, monitoring, and replacement be
+    managed?
+
+### 11.2 Task Assignment and Recovery
+
+-   How will task assignments be represented and persisted?
+-   How will task ownership and assignment history be maintained?
+-   What mechanism will distinguish execution attempts?
+-   How will stale results be rejected?
+-   How will leases, expiration, and reassignment work?
+-   What happens if the original worker reconnects after reassignment?
+
+### 11.3 Scheduling
+
+-   Will workers pull tasks from the coordinator, or will the
+    coordinator push tasks to workers?
+-   How will the coordinator choose between multiple eligible workers?
+-   How will task priority be represented?
+-   How will fairness and starvation be handled?
+
+### 11.4 Persistence
+
+-   Which database will be used initially?
+-   What transaction boundaries are required?
+-   Which information must be durable before acknowledging a state
+    transition?
+-   What are the retention requirements for results and execution
+    history?
+
+### 11.5 Job and Task Model
+
+-   What metadata and payload formats should jobs and tasks support?
+-   Should tasks have dependencies in a future release?
+-   How should partial job results be exposed to clients?
+
+### 11.6 Reliability and Delivery Semantics
+
+-   What execution guarantees will be provided?
+-   How will duplicate execution and side effects be handled?
+-   What are the precise cancellation guarantees?
+-   How should retries interact with cancellation and recovery?
+
+### 11.7 Operations and Security
+
+-   How will workers authenticate with the coordinator?
+-   How will clients authenticate and receive authorisation?
+-   What deployment environments will be supported?
+-   What are the backup and recovery objectives?
+
+------------------------------------------------------------------------
+
+## 12. Acceptance and Product Success Criteria
+
+The product will be considered successful when it demonstrates:
+
+### Functionality
+
+-   Clients can submit jobs and retrieve their status.
+-   Jobs can contain multiple independent tasks.
+-   Tasks can execute across multiple independent workers.
+-   Different executor types can be added without changing core
+    scheduling logic.
+-   Results and failures are recorded correctly.
+-   Job cancellation works according to defined semantics.
+
+### Reliability
+
+-   Worker failures are detected.
+-   Eligible tasks are recovered and reassigned.
+-   Stale results are rejected.
+-   Retries operate according to defined policies.
+-   Coordinator and worker restarts do not silently corrupt persistent
+    state.
+
+### Testing
+
+-   Unit and integration tests cover core behaviour.
+-   System tests cover multiple independent processes.
+-   Concurrency and race tests are included.
+-   Failure injection covers worker and coordinator failures.
+-   Performance and scalability are measured.
+
+### Operations
+
+-   Deployment and upgrade procedures are documented.
+-   Monitoring and troubleshooting are practical.
+-   Backup and restoration are demonstrated.
+-   Rollback procedures are tested.
+
+### Engineering and Learning
+
+-   The project uses a professional Git and review workflow.
+-   CI/CD is functional.
+-   Architecture and design decisions are documented.
+-   The project owner can explain the architecture, failure handling,
+    tests, deployment, and operational behaviour.
+
+------------------------------------------------------------------------
+
+## 13. Related Documents
+
+-   `docs/PROJECT_CHARTER.md`
+-   `docs/DEVELOPMENT_METHODOLOGY.md`
+-   `docs/DEFERRED_WORK.md`
+-   `docs/decisions/DECISION_LOG.md`
+-   Architecture and technical design documents (to be created)
+-   API and protocol specifications (to be created)
+-   Testing strategy (to be created)
+-   Deployment and operations documentation (to be created)
+
+------------------------------------------------------------------------
+
+## 14. Document Governance
+
+This PRD is a working product requirements document.
+
+-   Requirements must be reviewed and approved before implementation.
+-   New requirements must be evaluated for scope and impact.
+-   Significant design decisions must be recorded in the Decision Log.
+-   Deferred capabilities must be recorded in the Deferred Work
+    Register.
+-   Changes to approved requirements must be traceable.
+-   Each release must have an explicitly defined scope and acceptance
+    criteria.
+
+**Current status:** Draft --- review and discussion required.

@@ -1,0 +1,50 @@
+Add to requirements for future releases : A process supervisor or deployment system can handle restarting workers. Later, we can integrate with tools such as systemd or Kubernetes.
+
+Did we ad this to the PRD - 
+TODO 1 — Worker registry and capabilities
+
+We need persistent information about:
+- Worker ID and identity.
+- Supported executor types.
+- Configured execution capacity.
+- Current status.
+- Last heartbeat timestamp.
+- Worker configuration and registration details.
+TODO 2 — Job, task and assignment persistence
+
+We need to persist:
+- Submitted jobs.
+- Tasks belonging to each job.
+- Task status and execution history.
+- Which worker is assigned to each task.
+- Assignment and execution timestamps.
+- Retry attempts and results.
+- Current task ownership.
+
+
+
+We should also keep these open questions in the PRD's pending requirements section:
+- Where and how worker registration and capability information will be persisted.
+- How worker runtime state and heartbeat information will be maintained.
+- How jobs, tasks, assignments and execution history will be stored.
+- How worker processes will be started, monitored and restarted.
+- How lease expiry and reassignment will work.
+
+
+
+
+We have agreed:
+- Heartbeat every 5 seconds.
+- If no heartbeat arrives for 15 seconds, the coordinator marks the worker UNAVAILABLE.
+- The worker reports active task count and available slots.
+
+
+
+Let's settle this design decision.
+
+When a worker is marked UNAVAILABLE:
+1. The coordinator stops assigning new tasks to it.
+2. It identifies all tasks assigned to that worker.
+3. Those tasks become eligible for recovery and reassignment, subject to retry policies.
+4. The coordinator does not wait for confirmation that the original worker has actually terminated.
+5. Results from superseded execution attempts must not overwrite the results of newer attempts.
